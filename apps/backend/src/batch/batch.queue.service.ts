@@ -82,13 +82,18 @@ export class BatchQueueService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async onModuleInit(): Promise<void> {
-    await Promise.all([
+  onModuleInit(): void {
+    void Promise.all([
       this.queue.waitUntilReady(),
       this.dlq.waitUntilReady(),
       this.scheduler.waitUntilReady(),
       this.worker.waitUntilReady(),
-    ]);
+    ]).catch((error: unknown) => {
+      this.logger.error(
+        'Batch queue initialization failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -57,6 +57,7 @@ async function runMigrationCommand(command: string) {
 }
 
 async function bootstrap() {
+  const startupStartedAt = Date.now();
   const migrationCommand = process.argv
     .slice(2)
     .find((a) => a.startsWith('migration:'));
@@ -68,6 +69,7 @@ async function bootstrap() {
 
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  logger.log(`Nest application initialized in ${Date.now() - startupStartedAt}ms`);
   app.enableShutdownHooks();
   const configService = app.get(ConfigService);
 
@@ -96,9 +98,11 @@ async function bootstrap() {
     maxAge: corsPreflight,
   });
 
-  const v1Info = getVersionInfo('v1');
+  const shouldExposeSwagger =
+    nodeEnv !== 'production' || process.env.EXPORT_OPENAPI === 'true' || process.env.ENABLE_SWAGGER === 'true';
 
-  const config = new DocumentBuilder()
+  if (shouldExposeSwagger) {
+    const config = new DocumentBuilder()
     .setTitle('scoopdope API')
     .setDescription(
       'Blockchain education platform API powered by Stellar\n\n' +
@@ -154,19 +158,23 @@ async function bootstrap() {
     .addApiKey({ type: 'apiKey', in: 'header', name: 'X-API-KEY' }, 'X-API-KEY')
     .addServer(`/${LATEST_API_VERSION}`, `API ${LATEST_API_VERSION} (latest)`)
     .addServer(`/${DEFAULT_API_VERSION}`, `API ${DEFAULT_API_VERSION} (default)`)
-    .build();
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
 
-  if (process.env.EXPORT_OPENAPI === 'true' || process.argv.includes('--export-openapi')) {
-    const outputPath = join(__dirname, '..', 'openapi.json');
-    writeFileSync(outputPath, JSON.stringify(document, null, 2));
-    logger.log(`OpenAPI spec exported to ${outputPath}`);
-    process.exit(0);
+    if (process.env.EXPORT_OPENAPI === 'true' || process.argv.includes('--export-openapi')) {
+      const outputPath = join(__dirname, '..', 'openapi.json');
+      writeFileSync(outputPath, JSON.stringify(document, null, 2));
+      logger.log(`OpenAPI spec exported to ${outputPath}`);
+      process.exit(0);
+    }
   }
 
   await app.listen(port ?? 3000);
-  logger.log(`scoopdope API running on port ${port} [${nodeEnv}]`);
+  logger.log(
+    `scoopdope API running on port ${port} [${nodeEnv}] ` +
+      `(ready in ${Date.now() - startupStartedAt}ms)`,
+  );
 }
 bootstrap();
