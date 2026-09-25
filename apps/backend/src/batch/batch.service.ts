@@ -62,6 +62,8 @@ export class BatchService implements OnModuleInit {
     const job = await this.jobRepo.save(
       this.jobRepo.create({ type: 'courses', payload, totalItems: payload.length, createdById }),
     );
+    setImmediate(() => this.processCourseBatch(job.id));
+    return job;
   }
 
   async getJobStatus(jobId: string): Promise<BatchJob> {
@@ -124,7 +126,7 @@ export class BatchService implements OnModuleInit {
       await this.jobRepo.update(jobId, {
         processedItems: results.length,
         failedItems: errors.length,
-      } as Partial<BatchJob>);
+      } as any);
 
       if (index < job.payload.length) {
         await new Promise<void>((resolve) => setImmediate(resolve));
@@ -137,7 +139,7 @@ export class BatchService implements OnModuleInit {
           processedItems: results.length,
           failedItems: errors.length,
           startedAt: null,
-        } as Partial<BatchJob>);
+        } as any);
       }
     };
 
@@ -182,7 +184,7 @@ export class BatchService implements OnModuleInit {
       await this.jobRepo.update(jobId, {
         processedItems: results.length,
         failedItems: errors.length,
-      } as Partial<BatchJob>);
+      } as any);
 
       if (index < job.payload.length) {
         await new Promise<void>((resolve) => setImmediate(resolve));
@@ -195,7 +197,7 @@ export class BatchService implements OnModuleInit {
           processedItems: results.length,
           failedItems: errors.length,
           startedAt: null,
-        } as Partial<BatchJob>);
+        } as any);
       }
     };
 
