@@ -53,6 +53,45 @@ export class PayoutsService {
       const instructorId = course.instructor.id;
       const totalCompletions = completionCountByCourse.get(course.id) ?? 0;
 
+      let offset = 0;
+      let totalCompletions = 0;
+
+      while (true) {
+        let enrollments: Enrollment[];
+        try {
+          enrollments = await this.enrollmentsRepository.find({
+            where: {
+              courseId: course.id,
+              completedAt: Between(startDate, endDate),
+            },
+            order: { id: 'ASC' },
+            skip: offset,
+            take: batchSize,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const stack = error instanceof Error ? error.stack : undefined;
+          this.logger.error(
+            `Payout batch fetch failed for course ${course.id} at offset ${offset}: ${message}`,
+            stack,
+          );
+          failedBatches.push({ cursor: offset, error: message });
+          offset += batchSize;
+          continue;
+        }
+
+        if (enrollments.length === 0) {
+          break;
+        }
+
+        totalCompletions += enrollments.length;
+        offset += batchSize;
+
+        if (enrollments.length < batchSize) {
+          break;
+        }
+      }
+
       if (totalCompletions === 0) continue;
 
       const totalRevenue = totalCompletions * coursePrice;
@@ -119,7 +158,8 @@ export class PayoutsService {
       this.logger.log(`Payout processed for instructor ${payout.instructor.email}: $${payout.instructorShare}`);
     } catch (error) {
       payout.status = 'failed';
-      this.logger.error(`Payout failed: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Payout failed: ${message}`);
     }
 
     return this.payoutsRepository.save(payout);
