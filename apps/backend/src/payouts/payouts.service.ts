@@ -1,16 +1,11 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, Not, IsNull } from 'typeorm';
+import { Repository, Not, IsNull } from 'typeorm';
 import { Payout } from './payout.entity';
 import { Enrollment } from '../enrollments/enrollment.entity';
 import { Course } from '../courses/course.entity';
 import { ConfigService } from '@nestjs/config';
 import { KycService } from '../kyc/kyc.service';
-
-interface PayoutBatchFailure {
-  cursor: number;
-  error: string;
-}
 
 @Injectable()
 export class PayoutsService {
@@ -29,58 +24,34 @@ export class PayoutsService {
 
   async calculatePayouts(startDate: Date, endDate: Date): Promise<Payout[]> {
     const platformFeePercent = this.configService.get<number>('PLATFORM_FEE_PERCENT', 20);
-    const batchSize = this.configService.get<number>('payouts.batchSize', 500);
 
     const courses = await this.coursesRepository.find({
       where: { instructorId: Not(IsNull()) },
       relations: ['instructor'],
     });
 
+    const completionCounts = await this.enrollmentsRepository
+      .createQueryBuilder('enrollment')
+      .select('enrollment.courseId', 'courseId')
+      .addSelect('COUNT(enrollment.id)', 'count')
+      .where('enrollment.completedAt BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      })
+      .groupBy('enrollment.courseId')
+      .getRawMany<{ courseId: string; count: string }>();
+    const completionCountByCourse = new Map(
+      completionCounts.map(({ courseId, count }) => [courseId, Number(count)]),
+    );
+
     const payouts: Payout[] = [];
-    const failedBatches: PayoutBatchFailure[] = [];
 
     for (const course of courses) {
       if (!course.instructor) continue;
 
       const coursePrice = this.configService.get<number>(`COURSE_PRICE_${course.id}`, 0);
       const instructorId = course.instructor.id;
-
-      let offset = 0;
-      let totalCompletions = 0;
-
-      while (true) {
-        let enrollments: Enrollment[];
-        try {
-          enrollments = await this.enrollmentsRepository.find({
-            where: {
-              courseId: course.id,
-              completedAt: Between(startDate, endDate),
-            },
-            order: { id: 'ASC' },
-            skip: offset,
-            take: batchSize,
-          });
-        } catch (error) {
-          this.logger.error(
-            `Payout batch fetch failed for course ${course.id} at offset ${offset}: ${error.message}`,
-            error.stack,
-          );
-          failedBatches.push({ cursor: offset, error: error.message });
-          offset += batchSize;
-          continue;
-        }
-
-        if (enrollments.length === 0) {
-          break;
-        }
-
-        totalCompletions += enrollments.length;
-        offset += batchSize;
-
-        if (enrollments.length < batchSize) {
-          break;
-        }
-      }
+      const totalCompletions = completionCountByCourse.get(course.id) ?? 0;
 
       if (totalCompletions === 0) continue;
 
@@ -114,12 +85,6 @@ export class PayoutsService {
       });
 
       payouts.push(payout);
-    }
-
-    if (failedBatches.length > 0) {
-      this.logger.warn(
-        `Payout run completed with ${failedBatches.length} failed batch(es). See logs above for details.`,
-      );
     }
 
     return this.payoutsRepository.save(payouts);
